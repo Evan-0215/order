@@ -6,13 +6,13 @@
     <title>公司内部叫车系统</title>
     <!-- Excel解析库 - 本地文件 -->
     <script src="exceljs.min.js"></script>
-    <!-- CloudBase SDK v1.3.3 - CDN加载 -->
-    <script src="https://imgcache.qq.com/qcloud/cloudbase-js-sdk/1.3.3/cloudbase.full.js"></script>
+    <!-- CloudBase SDK v1.3.3 - 本地加载 -->
+    <script src="cloudbase.full.js"></script>
     <script>
         window.cloudBaseLoaded = typeof cloudbase !== 'undefined';
         window.cloudBaseLoadError = !window.cloudBaseLoaded;
         if (window.cloudBaseLoaded) {
-            console.log('CloudBase SDK 加载成功（CDN）');
+            console.log('CloudBase SDK 加载成功（本地）');
         } else {
             console.warn('CloudBase SDK 加载失败，将使用本地模式');
         }
@@ -774,32 +774,41 @@
         let cloudConnected = false;
         
         async function initCloudBase() {
-            // 等待CloudBase SDK加载（最多等待5秒）
+            // 等待CloudBase SDK加载
             let attempts = 0;
-            while (!window.cloudBaseLoaded && !window.cloudBaseLoadError && attempts < 50) {
+            while (typeof cloudbase === 'undefined' && attempts < 50) {
                 await new Promise(resolve => setTimeout(resolve, 100));
                 attempts++;
             }
 
-            if (window.cloudBaseLoadError || typeof cloudbase === 'undefined') {
-                console.warn('CloudBase SDK未加载，使用本地模式');
+            if (typeof cloudbase === 'undefined') {
+                console.error('CloudBase SDK未加载，使用本地模式');
+                alert('CloudBase SDK加载失败，请检查网络连接');
                 return false;
             }
+
+            console.log('CloudBase SDK已加载，开始初始化...');
 
             try {
                 app = cloudbase.init({
                     env: ENV_ID
                 });
+                console.log('CloudBase初始化成功，ENV_ID:', ENV_ID);
                 
                 // 匿名登录
+                console.log('开始匿名登录...');
                 await app.auth().anonymousAuthProvider().signIn();
+                console.log('匿名登录成功');
                 
                 db = app.database();
                 cloudConnected = true;
-                console.log('云端连接成功');
+                console.log('云端连接成功！');
                 return true;
             } catch (err) {
-                console.error('云端连接失败:', err);
+                console.error('云端连接失败，详细错误:', err);
+                console.error('错误类型:', err.code);
+                console.error('错误信息:', err.message);
+                alert('云端连接失败: ' + err.message);
                 cloudConnected = false;
                 return false;
             }
@@ -1020,22 +1029,43 @@
         // ============ 云端数据操作 ============
         async function loadDataFromCloud() {
             try {
+                console.log('开始加载云端数据...');
+                
                 // 加载客户
                 const customerRes = await db.collection('customers').get();
                 customers = customerRes.data.map(c => c.name);
                 if (customers.length === 0) customers = ['大漂亮'];
+                console.log('客户数据:', customers);
                 
                 // 加载库存
                 const inventoryRes = await db.collection('inventory').get();
                 inventory = inventoryRes.data;
+                console.log('库存数据条数:', inventory.length);
                 
                 // 加载订单
                 const orderRes = await db.collection('orders').get();
                 orders = orderRes.data;
+                console.log('订单数据条数:', orders.length);
                 
                 // 加载出货对账记录
                 const reconRes = await db.collection('reconRecords').get();
                 reconRecords = reconRes.data;
+                console.log('对账记录条数:', reconRecords.length);
+                
+                console.log('云端数据加载完成！');
+                
+                // 如果云端数据为空，尝试从本地同步
+                if (inventory.length === 0 && orders.length === 0 && reconRecords.length === 0) {
+                    console.log('云端数据为空，尝试从localStorage恢复...');
+                    // 加载本地数据到内存
+                    orders = JSON.parse(localStorage.getItem('orders') || '[]');
+                    customers = JSON.parse(localStorage.getItem('customers') || '["大漂亮"]');
+                    inventory = JSON.parse(localStorage.getItem('inventory') || '[]');
+                    reconRecords = JSON.parse(localStorage.getItem('reconRecords') || '[]');
+                    
+                    // 上传到云端
+                    await syncLocalToCloud();
+                }
                 
             } catch (err) {
                 console.error('加载云端数据失败:', err);
@@ -1044,6 +1074,60 @@
                 customers = JSON.parse(localStorage.getItem('customers') || '["大漂亮"]');
                 inventory = JSON.parse(localStorage.getItem('inventory') || '[]');
                 reconRecords = JSON.parse(localStorage.getItem('reconRecords') || '[]');
+                alert('云端数据加载失败，使用本地数据');
+            }
+        }
+        
+        // 同步本地数据到云端
+        async function syncLocalToCloud() {
+            if (!cloudConnected) return;
+            try {
+                console.log('开始同步本地数据到云端...');
+                
+                // 同步客户
+                if (customers.length > 0) {
+                    await db.collection('customers').where({}).remove();
+                    for (const name of customers) {
+                        await db.collection('customers').add({ name });
+                    }
+                    console.log('客户同步完成:', customers.length, '条');
+                }
+                
+                // 同步库存
+                if (inventory.length > 0) {
+                    await db.collection('inventory').where({}).remove();
+                    for (const item of inventory) {
+                        delete item._id;
+                        await db.collection('inventory').add(item);
+                    }
+                    console.log('库存同步完成:', inventory.length, '条');
+                }
+                
+                // 同步订单
+                if (orders.length > 0) {
+                    await db.collection('orders').where({}).remove();
+                    for (const item of orders) {
+                        delete item._id;
+                        await db.collection('orders').add(item);
+                    }
+                    console.log('订单同步完成:', orders.length, '条');
+                }
+                
+                // 同步对账记录
+                if (reconRecords.length > 0) {
+                    await db.collection('reconRecords').where({}).remove();
+                    for (const item of reconRecords) {
+                        delete item._id;
+                        await db.collection('reconRecords').add(item);
+                    }
+                    console.log('对账记录同步完成:', reconRecords.length, '条');
+                }
+                
+                alert('数据同步完成！库存:' + inventory.length + '条, 订单:' + orders.length + '条');
+                
+            } catch (err) {
+                console.error('同步失败:', err);
+                alert('同步失败: ' + err.message);
             }
         }
         
