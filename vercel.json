@@ -1,13 +1,20 @@
 {
   "version": 2,
   "name": "tpttoy",
-  "builds": [
+  "cleanUrls": false,
+  "headers": [
     {
-      "src": "index.html",
-      "use": "@vercel/static"
+      "source": "/cloudbase.full.js",
+      "headers": [
+        { "key": "Content-Type", "value": "application/javascript" }
+      ]
     }
   ],
   "routes": [
+    {
+      "src": "/(.*\\.js)$",
+      "dest": "/$1"
+    },
     {
       "src": "/(.*)",
       "dest": "/index.html"
