@@ -992,7 +992,18 @@
             if (connected) {
                 // 从云端加载数据
                 await loadDataFromCloud();
-                reconRecords = JSON.parse(localStorage.getItem('reconRecords') || '[]');
+                
+                // 如果云端数据为空且localStorage也无数据，初始化默认数据
+                if (orders.length === 0 && reconRecords.length === 0) {
+                    const localOrders = JSON.parse(localStorage.getItem('orders') || '[]');
+                    const localRecon = JSON.parse(localStorage.getItem('reconRecords') || '[]');
+                    if (localOrders.length > 0 || localRecon.length > 0) {
+                        orders = localOrders;
+                        reconRecords = localRecon;
+                        // 同步到云端
+                        await syncLocalToCloud();
+                    }
+                }
 
                 // 如果云端已连接，显示同步按钮
                 const syncBtn = document.getElementById('syncCloudBtn');
@@ -1032,25 +1043,45 @@
                 console.log('开始加载云端数据...');
                 
                 // 加载客户
-                const customerRes = await db.collection('customers').get();
-                customers = customerRes.data.map(c => c.name);
-                if (customers.length === 0) customers = ['大漂亮'];
-                console.log('客户数据:', customers);
+                try {
+                    const customerRes = await db.collection('customers').get();
+                    customers = customerRes.data.map(c => c.name);
+                    if (customers.length === 0) customers = ['大漂亮'];
+                    console.log('客户数据:', customers);
+                } catch(e) {
+                    console.error('客户集合加载失败:', e);
+                    customers = ['大漂亮'];
+                }
                 
                 // 加载库存
-                const inventoryRes = await db.collection('inventory').get();
-                inventory = inventoryRes.data;
-                console.log('库存数据条数:', inventory.length);
+                try {
+                    const inventoryRes = await db.collection('inventory').get();
+                    inventory = inventoryRes.data;
+                    console.log('库存数据条数:', inventory.length);
+                } catch(e) {
+                    console.error('库存集合加载失败:', e);
+                    inventory = [];
+                }
                 
                 // 加载订单
-                const orderRes = await db.collection('orders').get();
-                orders = orderRes.data;
-                console.log('订单数据条数:', orders.length);
+                try {
+                    const orderRes = await db.collection('orders').get();
+                    orders = orderRes.data;
+                    console.log('订单数据条数:', orders.length);
+                } catch(e) {
+                    console.error('订单集合加载失败:', e);
+                    orders = [];
+                }
                 
                 // 加载出货对账记录
-                const reconRes = await db.collection('reconRecords').get();
-                reconRecords = reconRes.data;
-                console.log('对账记录条数:', reconRecords.length);
+                try {
+                    const reconRes = await db.collection('reconRecords').get();
+                    reconRecords = reconRes.data;
+                    console.log('对账记录条数:', reconRecords.length);
+                } catch(e) {
+                    console.error('对账记录集合加载失败:', e);
+                    reconRecords = [];
+                }
                 
                 console.log('云端数据加载完成！');
                 
