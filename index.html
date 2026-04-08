@@ -1491,6 +1491,19 @@
             // 清理内容
             const cleanContent = content.replace(/^\/+|\/+$/g, '').trim();
 
+            // ===== 提取收货信息 =====
+            let recipientInfo = '';
+            const recipientMatch = cleanContent.match(/收货人[：:]\s*(\S+)/);
+            const phoneMatch = cleanContent.match(/手机号[：:]\s*(\S+)/);
+            const addressMatch = cleanContent.match(/详细地址[：:]\s*(.+?)(?=\n\n|\n货拉拉|$)/i);
+            if (recipientMatch || phoneMatch || addressMatch) {
+                recipientInfo = [
+                    recipientMatch ? `收货人：${recipientMatch[1]}` : '',
+                    phoneMatch ? `手机号：${phoneMatch[1]}` : '',
+                    addressMatch ? `地址：${addressMatch[1].trim()}` : ''
+                ].filter(Boolean).join('\n');
+            }
+
             // ===== 客户信息使用页面下拉框选择的值 =====
             let customer = customerSelect;
 
@@ -1511,25 +1524,35 @@
                 const matchEnd = match.index + match[0].length;
 
                 // 获取匹配前后的上下文
-                const contextBefore = cleanContent.substring(Math.max(0, matchStart - 18), matchStart);
-                const contextAfter = cleanContent.substring(matchEnd, Math.min(cleanContent.length, matchEnd + 18));
+                const contextBefore = cleanContent.substring(Math.max(0, matchStart - 25), matchStart);
+                const contextAfter = cleanContent.substring(matchEnd, Math.min(cleanContent.length, matchEnd + 25));
 
                 // 找到下一个数字+单位的位置作为结束
                 let nextMatch = unitPattern.exec(cleanContent);
                 unitPattern.lastIndex = matchEnd; // 恢复正则位置
                 let endPos = nextMatch ? nextMatch.index : cleanContent.length;
 
-                // 提取片段（产品名在匹配项之前，从匹配项往前找）
+                // 提取片段（产品名在匹配项之前）
                 let fragment = '';
                 if (contextBefore) {
-                    // 从上下文前面提取最后一段（可能是产品名）
-                    const parts = contextBefore.split(/[\n,，]/);
-                    fragment = parts[parts.length - 1].trim();
+                    // 从上下文前面提取最后一段（可能是产品名），去掉换行和逗号
+                    const text = contextBefore.replace(/\n+/g, ' ').replace(/[,，]/g, ' ');
+                    const parts = text.split(/\s+/).filter(p => p.trim());
+                    if (parts.length > 0) {
+                        fragment = parts[parts.length - 1].trim();
+                    }
                 }
                 // 如果前面没提取到，尝试从后面提取
                 if (!fragment) {
-                    fragment = cleanContent.substring(matchEnd, endPos).trim();
+                    const afterText = cleanContent.substring(matchEnd, endPos).replace(/\n+/g, ' ');
+                    const afterParts = afterText.split(/\s+/).filter(p => p.trim());
+                    if (afterParts.length > 0) {
+                        fragment = afterParts[0].trim();
+                    }
                 }
+
+                // 清理片段：去掉可能的规格数字开头（如"400体花开向阳"）
+                fragment = fragment.replace(/^\d+\s*体\s*/, '');
 
                 // 遇到分隔符停止
                 const sepIndex = fragment.search(/[➕&，、\n]/);
@@ -1572,6 +1595,12 @@
             let parsedCount = 0;
             const now = new Date().toLocaleString('zh-CN');
 
+            // 过滤掉收货信息，只保留货物相关行
+            const goodsLines = cleanContent.split('\n')
+                .filter(line => !line.match(/^(收货人|手机号|所在地区|详细地址)[:：]/))
+                .filter(line => line.trim())
+                .join('\n');
+
             products.forEach((p, index) => {
                 const order = {
                     _id: Date.now().toString() + index,
@@ -1581,7 +1610,7 @@
                     quantity: p.quantity,
                     volume: p.volume,
                     unit: p.unit,
-                    remark: cleanContent,
+                    remark: recipientInfo || goodsLines,
                     remark1: p.foundInInventory ? '' : '⚠️未匹配到库存',
                     time: now
                 };
