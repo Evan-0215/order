@@ -1369,10 +1369,10 @@
             if (!fragment) return null;
 
             const pName = fragment.toLowerCase();
-            const keywords = extractKeywords(fragment);
-
+            const spec = extractSpec(fragment);
+            
             // 合并上下文到关键词
-            const allKeywords = [...keywords];
+            let allKeywords = extractKeywords(fragment);
             if (contextBefore) {
                 const beforeKw = extractKeywords(contextBefore);
                 beforeKw.forEach(k => {
@@ -1405,7 +1405,36 @@
                 }
             }
 
-            // 优先级3：子串匹配（用关键词）
+            // 优先级3：品名包含片段 或 片段包含品名
+            for (let inv of inventory) {
+                const invName = (inv.name || '').toLowerCase();
+                
+                // 片段包含完整品名（如"织织告白小兔"包含"告白小兔"）
+                if (pName.includes(invName) && invName.length >= 4) {
+                    return inv;
+                }
+                // 品名包含完整片段
+                if (invName.includes(pName) && pName.length >= 4) {
+                    return inv;
+                }
+            }
+
+            // 优先级4：带规格的精确匹配（400体、100体等）
+            if (spec) {
+                for (let inv of inventory) {
+                    const invName = (inv.name || '').toLowerCase();
+                    // 检查品名是否包含该规格
+                    if (invName.includes(spec + '体') || invName.includes(spec + '端')) {
+                        // 同时检查产品名是否匹配
+                        const nameWithoutSpec = pName.replace(/\d+\s*体/, '').trim();
+                        if (invName.includes(nameWithoutSpec) || nameWithoutSpec.includes(invName.replace(/\d+\s*体/, '').trim())) {
+                            return inv;
+                        }
+                    }
+                }
+            }
+
+            // 优先级5：关键词匹配（只有当匹配分数足够高时才返回）
             let bestMatch = null;
             let bestScore = 0;
 
@@ -1414,43 +1443,40 @@
                 const invAlias = (inv.alias || '').toLowerCase();
 
                 let score = 0;
-                let matchedKeyword = '';
+                let matchedCount = 0;
 
                 for (let kw of allKeywords) {
                     if (kw.length <= 1) continue;
 
                     const kwLower = kw.toLowerCase();
 
-                    // 检查品名是否包含关键词
+                    // 品名包含关键词（权重更高）
                     if (invName.includes(kwLower)) {
-                        // 有规格时优先返回品名含该规格的产品
-                        const spec = extractSpec(fragment);
-                        if (spec && invName.includes(spec + '体')) {
-                            score += 100;
-                        } else {
-                            score += kw.length;
-                        }
-                        matchedKeyword = kw;
+                        score += kw.length * 2;
+                        matchedCount++;
                     }
 
-                    // 检查别名是否包含关键词
+                    // 别名包含关键词
                     if (invAlias && invAlias.includes(kwLower)) {
-                        score += kw.length * 0.8;
-                        if (!matchedKeyword) matchedKeyword = kw;
+                        score += kw.length;
+                        matchedCount++;
                     }
                 }
 
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestMatch = inv;
+                // 要求至少匹配2个关键词，且分数至少6分
+                if (matchedCount >= 2 && score >= 6) {
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestMatch = inv;
+                    }
                 }
             }
 
-            if (bestScore > 0) {
+            if (bestScore >= 6) {
                 return bestMatch;
             }
 
-            // 优先级4：仍未匹配，使用片段作为品名
+            // 优先级6：仍未匹配，返回null（使用原始片段作为品名）
             return null;
         }
 
