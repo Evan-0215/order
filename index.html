@@ -1365,26 +1365,14 @@
         }
 
         // 匹配产品（按优先级）
-        function matchProduct(fragment, contextBefore, contextAfter) {
-            if (!fragment) return null;
+        function matchProduct(productName) {
+            if (!productName || productName.length < 2) return null;
 
-            const pName = fragment.toLowerCase();
-            const spec = extractSpec(fragment);
+            const pName = productName.toLowerCase();
+            const spec = extractSpec(productName);
             
-            // 合并上下文到关键词
-            let allKeywords = extractKeywords(fragment);
-            if (contextBefore) {
-                const beforeKw = extractKeywords(contextBefore);
-                beforeKw.forEach(k => {
-                    if (!allKeywords.includes(k)) allKeywords.push(k);
-                });
-            }
-            if (contextAfter) {
-                const afterKw = extractKeywords(contextAfter);
-                afterKw.forEach(k => {
-                    if (!allKeywords.includes(k)) allKeywords.push(k);
-                });
-            }
+            // 提取关键词
+            const keywords = extractKeywords(productName);
 
             // 按优先级匹配
             for (let inv of inventory) {
@@ -1405,36 +1393,38 @@
                 }
             }
 
-            // 优先级3：品名包含片段 或 片段包含品名
+            // 优先级3：品名包含片段 或 片段包含品名（至少3个字符）
             for (let inv of inventory) {
                 const invName = (inv.name || '').toLowerCase();
                 
                 // 片段包含完整品名（如"织织告白小兔"包含"告白小兔"）
-                if (pName.includes(invName) && invName.length >= 4) {
+                if (pName.includes(invName) && invName.length >= 3) {
                     return inv;
                 }
                 // 品名包含完整片段
-                if (invName.includes(pName) && pName.length >= 4) {
+                if (invName.includes(pName) && pName.length >= 3) {
                     return inv;
                 }
             }
 
-            // 优先级4：带规格的精确匹配（400体、100体等）
+            // 优先级4：带规格的匹配（400体、100体等）
             if (spec) {
                 for (let inv of inventory) {
                     const invName = (inv.name || '').toLowerCase();
-                    // 检查品名是否包含该规格
+                    // 品名包含该规格
                     if (invName.includes(spec + '体') || invName.includes(spec + '端')) {
-                        // 同时检查产品名是否匹配
+                        // 同时检查产品名是否匹配（去掉规格后）
                         const nameWithoutSpec = pName.replace(/\d+\s*体/, '').trim();
-                        if (invName.includes(nameWithoutSpec) || nameWithoutSpec.includes(invName.replace(/\d+\s*体/, '').trim())) {
+                        const invNameWithoutSpec = invName.replace(/\d+\s*体/, '').replace(/\d+\s*端/, '');
+                        // 产品名关键部分匹配
+                        if (nameWithoutSpec.length >= 2 && invNameWithoutSpec.includes(nameWithoutSpec)) {
                             return inv;
                         }
                     }
                 }
             }
 
-            // 优先级5：关键词匹配（只有当匹配分数足够高时才返回）
+            // 优先级5：关键词匹配（需要至少匹配2个有意义的词，且分数足够高）
             let bestMatch = null;
             let bestScore = 0;
 
@@ -1444,27 +1434,30 @@
 
                 let score = 0;
                 let matchedCount = 0;
+                const matchedWords = [];
 
-                for (let kw of allKeywords) {
+                for (let kw of keywords) {
                     if (kw.length <= 1) continue;
 
                     const kwLower = kw.toLowerCase();
 
-                    // 品名包含关键词（权重更高）
+                    // 品名包含关键词
                     if (invName.includes(kwLower)) {
-                        score += kw.length * 2;
+                        score += kw.length * 3; // 提高权重
                         matchedCount++;
+                        matchedWords.push(kw);
                     }
 
                     // 别名包含关键词
                     if (invAlias && invAlias.includes(kwLower)) {
-                        score += kw.length;
+                        score += kw.length * 2;
                         matchedCount++;
+                        matchedWords.push(kw);
                     }
                 }
 
-                // 要求至少匹配2个关键词，且分数至少6分
-                if (matchedCount >= 2 && score >= 6) {
+                // 要求至少匹配2个关键词，且分数至少8分
+                if (matchedCount >= 2 && score >= 8) {
                     if (score > bestScore) {
                         bestScore = score;
                         bestMatch = inv;
@@ -1472,11 +1465,11 @@
                 }
             }
 
-            if (bestScore >= 6) {
+            if (bestScore >= 8) {
                 return bestMatch;
             }
 
-            // 优先级6：仍未匹配，返回null（使用原始片段作为品名）
+            // 未能匹配，返回null
             return null;
         }
 
@@ -1549,54 +1542,27 @@
                 const matchStart = match.index;
                 const matchEnd = match.index + match[0].length;
 
-                // 获取匹配前后的上下文
-                const contextBefore = cleanContent.substring(Math.max(0, matchStart - 25), matchStart);
-                const contextAfter = cleanContent.substring(matchEnd, Math.min(cleanContent.length, matchEnd + 25));
-
-                // 找到下一个数字+单位的位置作为结束
-                let nextMatch = unitPattern.exec(cleanContent);
-                unitPattern.lastIndex = matchEnd; // 恢复正则位置
-                let endPos = nextMatch ? nextMatch.index : cleanContent.length;
-
-                // 提取片段（产品名在匹配项之前）
-                let fragment = '';
-                if (contextBefore) {
-                    // 从上下文前面提取最后一段（可能是产品名），去掉换行和逗号
-                    const text = contextBefore.replace(/\n+/g, ' ').replace(/[,，]/g, ' ');
-                    const parts = text.split(/\s+/).filter(p => p.trim());
-                    if (parts.length > 0) {
-                        fragment = parts[parts.length - 1].trim();
-                    }
+                // 从匹配项之前提取产品名：往前找到行首或分隔符
+                let productName = '';
+                for (let i = matchStart - 1; i >= 0; i--) {
+                    const char = cleanContent[i];
+                    if (char === '\n' || char === '\r') break;
+                    if (/[➕&，、]/.test(char)) break;
+                    productName = char + productName;
                 }
-                // 如果前面没提取到，尝试从后面提取
-                if (!fragment) {
-                    const afterText = cleanContent.substring(matchEnd, endPos).replace(/\n+/g, ' ');
-                    const afterParts = afterText.split(/\s+/).filter(p => p.trim());
-                    if (afterParts.length > 0) {
-                        fragment = afterParts[0].trim();
-                    }
+                productName = productName.trim();
+                
+                // 清理产品名：去掉规格前缀（如"400体"开头的）
+                productName = productName.replace(/^\d+\s*体\s*/, '');
+                
+                // 限制长度
+                if (productName.length > 30) {
+                    productName = productName.substring(0, 30);
                 }
-
-                // 清理片段：去掉可能的规格数字开头（如"400体花开向阳"）
-                fragment = fragment.replace(/^\d+\s*体\s*/, '');
-
-                // 遇到分隔符停止
-                const sepIndex = fragment.search(/[➕&，、\n]/);
-                if (sepIndex !== -1) {
-                    fragment = fragment.substring(0, sepIndex);
-                }
-
-                // 限制30字符
-                if (fragment.length > 30) {
-                    fragment = fragment.substring(0, 30);
-                }
-
-                // 提取规格
-                const spec = extractSpec(fragment);
 
                 // 匹配产品
-                const foundProduct = matchProduct(fragment, contextBefore, contextAfter);
-                const finalProductName = foundProduct ? foundProduct.name : (fragment || '未识别');
+                const foundProduct = matchProduct(productName);
+                const finalProductName = foundProduct ? foundProduct.name : (productName || '未识别');
 
                 // 计算总个数和总体积
                 const { totalQty, totalVolume } = calculate(unit, boxes, foundProduct);
@@ -1608,7 +1574,7 @@
                     volume: totalVolume,
                     unit: unit === 'ctn' ? '箱' : unit,
                     foundInInventory: foundProduct !== null,
-                    rawFragment: fragment
+                    rawFragment: productName
                 });
             }
 
